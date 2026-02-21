@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MDT Med Search</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-panel: #1e1e1e;
+            --bg-hover: #2c2c2c;
+            --accent: #d9534f;
+            --alert: #ff3b30;
+            --warning-bg: rgba(255, 59, 48, 0.15);
+            --text-main: #e0e0e0;
+            --text-muted: #a0a0a0;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            padding: 20px; 
+            max-width: 700px; 
+            margin: auto; 
+            background-color: var(--bg-dark); 
+            color: var(--text-main); 
+        }
+        h2 { color: var(--accent); border-bottom: 2px solid var(--bg-panel); padding-bottom: 10px;}
+        #search-box { 
+            width: 100%; 
+            padding: 16px; 
+            font-size: 18px; 
+            box-sizing: border-box; 
+            border: 1px solid #333; 
+            border-radius: 8px; 
+            background-color: var(--bg-panel);
+            color: white;
+            outline: none;
+        }
+        #search-box:focus { border-color: var(--accent); }
+        #suggestions { 
+            background-color: var(--bg-panel); 
+            border-radius: 8px; 
+            display: none; 
+            margin-top: 8px; 
+            max-height: 300px; 
+            overflow-y: auto; 
+            border: 1px solid #333;
+        }
+        .suggestion-item { padding: 16px; cursor: pointer; border-bottom: 1px solid #333; font-size: 16px; }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover { background-color: var(--bg-hover); color: var(--accent); }
+        
+        #results { 
+            margin-top: 24px; 
+            display: none; 
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        .card {
+            background-color: var(--bg-panel);
+            border-left: 5px solid var(--accent);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card.high-risk-card {
+            border-left: 8px solid var(--alert);
+            box-shadow: 0 0 15px rgba(255, 59, 48, 0.15);
+        }
+        .risk-banner {
+            background-color: rgba(255, 59, 48, 0.1);
+            color: var(--alert);
+            padding: 10px 15px;
+            border-radius: 4px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .black-box {
+            background-color: var(--warning-bg);
+            border: 2px solid var(--alert);
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .black-box-title {
+            color: var(--alert);
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .card h3 { margin-top: 0; color: white; text-transform: uppercase; letter-spacing: 1px;}
+        .data-group { margin-bottom: 18px; }
+        .data-label { font-weight: bold; color: var(--accent); font-size: 14px; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;}
+        .data-value { font-size: 16px; line-height: 1.5; margin: 0; }
+        
+        .scroll-box {
+            background-color: #161616;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 14px;
+            color: #ccc;
+            line-height: 1.4;
+        }
+        
+        .loader { color: var(--text-muted); font-style: italic; display: none; margin-top: 20px;}
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <h2>MDT Med Search</h2>
+    <input type="text" id="search-box" placeholder="Start typing a medication (e.g., Amiodarone)..." autocomplete="off">
+    <div id="suggestions"></div>
+    
+    <div id="loader" class="loader">Querying NLM, MED-RT, & OpenFDA...</div>
+    <div id="results"></div>
+
+    <script>
+        const searchBox = document.getElementById('search-box');
+        const suggestionsBox = document.getElementById('suggestions');
+        const resultsBox = document.getElementById('results');
+        const loader = document.getElementById('loader');
+        let debounceTimer;
+
+        const highRiskKeywords = [
+            'anticoagulant', 'antiplatelet', 'beta adrenergic', 'calcium channel', 
+            'opioid', 'antiarrhythmic', 'thrombolytic', 'hypoglycemic', 
+            'insulin', 'monoamine oxidase', 'benzodiazepine', 'barbiturate', 'nitrate'
+        ];
+
+        searchBox.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            const query = this.value;
+
+            if (query.length < 3) {
+                suggestionsBox.style.display = 'none';
+                return;
+            }
+
+            debounceTimer = setTimeout(() => {
+                fetch(`https://rxnav.nlm.nih.gov/REST/spellingsuggestions.json?name=${query}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        suggestionsBox.innerHTML = '';
+                        if (data.suggestionGroup.suggestionList) {
+                            const suggestions = data.suggestionGroup.suggestionList.suggestion;
+                            suggestions.forEach(med => {
+                                const div = document.createElement('div');
+                                div.className = 'suggestion-item';
+                                div.textContent = med;
+                                div.onclick = () => getDrugData(med);
+                                suggestionsBox.appendChild(div);
+                            });
+                            suggestionsBox.style.display = 'block';
+                        } else {
+                            suggestionsBox.style.display = 'none';
+                        }
+                    })
+                    .catch(error => console.error("Error fetching suggestions:", error));
+            }, 300); 
+        });
+
+        async function getDrugData(medName) {
+            searchBox.value = medName;
+            suggestionsBox.style.display = 'none';
+            resultsBox.style.display = 'none';
+            loader.style.display = 'block';
+            
+            try {
+                // Step A: Convert the name into the universal RxCUI for NLM & MED-RT
+                const rxcuiResponse = await fetch(`https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${medName}`);
+                const rxcuiData = await rxcuiResponse.json();
+                
+                if (!rxcuiData.idGroup.rxnormId) {
+                    displayError(medName, "Could not find an exact clinical match in the NLM database.");
+                    return;
+                }
+                const rxcui = rxcuiData.idGroup.rxnormId[0];
+
+                // Step B: Fetch FDA clinical classifications & MED-RT Indications via RxCUI
+                const classPromise = fetch(`https://rxnav.nlm.nih.gov/REST/rxclass/class/byRxcui.json?rxcui=${rxcui}&relaSource=FDASPL`).then(res => res.json());
+                const indPromise = fetch(`https://rxnav.nlm.nih.gov/REST/rxclass/class/byRxcui.json?rxcui=${rxcui}&relaSource=MEDRT`).then(res => res.json());
+                
+                // Step C: Fetch OpenFDA using the generic or brand name directly (Much more reliable)
+                const fdaUrl = `https://api.fda.gov/drug/label.json?search=(openfda.generic_name:"${medName}"+openfda.brand_name:"${medName}")&limit=1`;
+                const fdaPromise = fetch(fdaUrl)
+                    .then(res => {
+                        if (!res.ok) return null; 
+                        return res.json();
+                    })
+                    .catch(() => null);
+
+                // Wait for all 3 databases to respond
+                const [classData, indData, fdaData] = await Promise.all([classPromise, indPromise, fdaPromise]);
+
+                renderResults(medName, classData, indData, fdaData);
+
+            } catch (error) {
+                console.error("API Error:", error);
+                displayError(medName, "Failed to connect to the medical APIs. Check the MDT network connection.");
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        function renderResults(medName, classData, indData, fdaData) {
+            resultsBox.innerHTML = '';
+            resultsBox.style.display = 'block';
+
+            let moaList = []; 
+            let peList = [];  
+            let epcList = []; 
+            let indicationsList = []; 
+            let isHighRisk = false;
+            let adverseReactions = "No adverse reaction data found in the OpenFDA database for this formulation.";
+            let blackBoxWarning = null;
+
+            // 1. Check for High-Risk categories
+            const checkRisk = (text) => {
+                return highRiskKeywords.some(keyword => text.toLowerCase().includes(keyword));
+            };
+
+            // 2. Parse NLM Class Data
+            if (classData && classData.rxclassDrugInfoList && classData.rxclassDrugInfoList.rxclassDrugInfo) {
+                classData.rxclassDrugInfoList.rxclassDrugInfo.forEach(item => {
+                    const className = item.rxclassMinConceptItem.className;
+                    const classType = item.rxclassMinConceptItem.classType;
+                    
+                    if (classType === 'MOA' && !moaList.includes(className)) moaList.push(className);
+                    if (classType === 'PE' && !peList.includes(className)) peList.push(className);
+                    if (classType === 'EPC' && !epcList.includes(className)) epcList.push(className);
+
+                    if (checkRisk(className)) isHighRisk = true;
+                });
+            }
+
+            // 3. Parse MED-RT Indications Data
+            if (indData && indData.rxclassDrugInfoList && indData.rxclassDrugInfoList.rxclassDrugInfo) {
+                indData.rxclassDrugInfoList.rxclassDrugInfo.forEach(item => {
+                    const className = item.rxclassMinConceptItem.className;
+                    const rela = item.rela; 
+                    
+                    if (rela && (rela.includes('treat') || rela.includes('prevent'))) {
+                        const cleanName = className.charAt(0).toUpperCase() + className.slice(1).toLowerCase();
+                        if (!indicationsList.includes(cleanName)) indicationsList.push(cleanName);
+                    }
+                });
+            }
+
+            // 4. Parse OpenFDA Side Effects & Boxed Warnings (Aggressive hunt strategy)
+            if (fdaData && fdaData.results && fdaData.results.length > 0) {
+                const label = fdaData.results[0];
+                
+                // Fallback logic to find side effects wherever the manufacturer hid them
+                if (label.adverse_reactions) {
+                    adverseReactions = label.adverse_reactions[0];
+                } else if (label.warnings_and_cautions) {
+                    adverseReactions = "<em>Adverse Reactions section omitted by manufacturer. Warnings & Cautions:</em><br><br>" + label.warnings_and_cautions[0];
+                } else if (label.warnings) {
+                    adverseReactions = "<em>Adverse Reactions section omitted by manufacturer. Warnings:</em><br><br>" + label.warnings[0];
+                }
+
+                if (label.boxed_warning) {
+                    blackBoxWarning = label.boxed_warning[0];
+                    isHighRisk = true; // Auto-flag as high risk if there's a black box warning
+                }
+            }
+
+            // Build the UI
+            let cardClass = isHighRisk ? 'card high-risk-card' : 'card';
+            let html = `<div class="${cardClass}">`;
+            
+            if (isHighRisk && !blackBoxWarning) {
+                html += `<div class="risk-banner">⚠️ High-Risk EMS Medication Class</div>`;
+            }
+
+            html += `<h3>${medName}</h3>`;
+
+            if (blackBoxWarning) {
+                html += `
+                    <div class="black-box">
+                        <div class="black-box-title">⚠️ FDA BOXED WARNING</div>
+                        ${blackBoxWarning}
+                    </div>
+                `;
+            }
+            
+            if (indicationsList.length > 0) {
+                html += `<div class="data-group"><div class="data-label">Commonly Prescribed For</div><div class="data-value">• ${indicationsList.join('<br>• ')}</div></div>`;
+            }
+
+            if (epcList.length > 0) {
+                html += `<div class="data-group"><div class="data-label">Pharmacologic Class</div><div class="data-value">${epcList.join('<br>')}</div></div>`;
+            }
+            if (moaList.length > 0) {
+                html += `<div class="data-group"><div class="data-label">Mechanism of Action</div><div class="data-value">${moaList.join('<br>')}</div></div>`;
+            }
+            if (peList.length > 0) {
+                html += `<div class="data-group"><div class="data-label">Physiologic Effect</div><div class="data-value">${peList.join('<br>')}</div></div>`;
+            }
+
+            html += `
+                <div class="data-group">
+                    <div class="data-label">Side Effects & Adverse Reactions (FDA)</div>
+                    <div class="scroll-box">${adverseReactions}</div>
+                </div>
+            `;
+            
+            html += `</div>`;
+            resultsBox.innerHTML = html;
+        }
+
+        function displayError(medName, message) {
+            resultsBox.style.display = 'block';
+            resultsBox.innerHTML = `
+                <div class="card" style="border-left-color: #f0ad4e;">
+                    <h3>${medName}</h3>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
